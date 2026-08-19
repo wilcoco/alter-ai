@@ -1,0 +1,3 @@
+# Railway / Nixpacks 배포용.
+# app/core 는 의존성 0 (순수 파이썬) — 아래는 서비스 층에만 필요하다.
+-e .[postgres]

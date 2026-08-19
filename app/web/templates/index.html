@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>coral — 최소 한 바퀴</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --ink:#e6edf3; --dim:#8b949e;
+    --canonical:#3fb950;   /* 신규 안정층 — 굳은 것 */
+    --polyp:#e3b341;       /* 폴립층 — 살아있는 활성면 */
+    --dormant:#8b949e;     /* 잠복 — 죽지 않은 가지 */
+    --accent:#58a6ff; --danger:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;
+    align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:17px;letter-spacing:.5px}
+  header .sub{color:var(--dim);font-size:12px}
+  .pill{font-size:11px;padding:2px 8px;border:1px solid var(--line);border-radius:99px;color:var(--dim)}
+  .pill.warn{border-color:var(--polyp);color:var(--polyp)}
+  main{display:grid;grid-template-columns:1fr 1fr 1.15fr;gap:1px;background:var(--line);
+    min-height:calc(100vh - 52px)}
+  section{background:var(--panel);padding:14px 16px;overflow-y:auto;max-height:calc(100vh - 52px)}
+  section > h2{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:1px}
+  section > .hint{color:var(--dim);font-size:12px;margin:0 0 14px}
+  .stack h2{color:var(--canonical)} .polyp h2{color:var(--polyp)}
+  .ask h2{color:var(--accent)}
+  .node{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .node.canonical{border-left:3px solid var(--canonical)}
+  .node.polyp{border-left:3px solid var(--polyp)}
+  .node.dormant{border-left:3px solid var(--dormant);opacity:.65}
+  .node .title{font-weight:600;margin-bottom:4px;word-break:break-word}
+  .node .body{color:var(--dim);font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 0;font-size:11px;color:var(--dim)}
+  .tag{padding:1px 6px;border:1px solid var(--line);border-radius:4px}
+  .tag.verified{border-color:var(--canonical);color:var(--canonical)}
+  .tag.type{color:var(--accent);border-color:var(--accent)}
+  .actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  button{background:#21262d;color:var(--ink);border:1px solid var(--line);border-radius:6px;
+    padding:5px 10px;font-size:12px;cursor:pointer;font-family:inherit}
+  button:hover{border-color:var(--accent)} button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--accent);color:#04121f;border-color:var(--accent);font-weight:600}
+  button.ghost{background:transparent}
+  input,textarea{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:6px;
+    color:var(--ink);padding:8px 10px;font:inherit;font-size:13px}
+  textarea{resize:vertical;min-height:74px}
+  label{display:block;font-size:11px;color:var(--dim);margin:10px 0 4px;
+    text-transform:uppercase;letter-spacing:.6px}
+  .row{display:flex;gap:8px} .row > *{flex:1}
+  .answer{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
+    padding:12px;margin:14px 0;white-space:pre-wrap;word-break:break-word;font-size:13px}
+  .injected{font-size:11.5px;color:var(--canonical);margin-top:10px;
+    border-top:1px dashed var(--line);padding-top:8px}
+  .verdicts{font-size:11px;color:var(--dim);margin-top:6px;font-family:ui-monospace,monospace;
+    white-space:pre-wrap}
+  .empty{color:var(--dim);font-size:12.5px;font-style:italic;padding:8px 0}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-bottom:12px}
+  .stats b{color:var(--ink);font-weight:600}
+  #toast{position:fixed;right:16px;bottom:16px;max-width:380px;background:#21262d;
+    border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
+    padding:10px 14px;font-size:12.5px;display:none;white-space:pre-wrap;z-index:9}
+  #toast.err{border-left-color:var(--danger)}
+  .wheel{font-size:11px;color:var(--dim);margin-top:14px;border-top:1px solid var(--line);
+    padding-top:10px;line-height:1.8}
+  @media(max-width:1000px){main{grid-template-columns:1fr}
+    section{max-height:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🪸 coral</h1>
+  <span class="sub">최소 한 바퀴 — 포획 → 검증 → 승격 → 주입</span>
+  <span class="pill {% if not llm_enabled %}warn{% endif %}">기저: {{ llm }}</span>
+  {% if not llm_enabled %}<span class="pill warn">ANTHROPIC_API_KEY 미설정 (stub 모드)</span>{% endif %}
+  <span class="pill">승격 문턱 {{ stake_threshold }}pt · 잠복기 {{ quarantine_ticks }}틱</span>
+  <span class="pill">v{{ version }}</span>
+</header>
+
+<main>
+  <!-- 좌: 신규 안정층 -->
+  <section class="stack">
+    <h2>신규 안정층 (정본)</h2>
+    <p class="hint">석회화 판정을 통과해 굳은 지식. <b>다음 질문에 주입되는 것이 이것뿐이다.</b></p>
+    <div class="stats" id="stats"></div>
+    <div id="canonical"></div>
+    <h2 style="margin-top:22px;color:var(--dormant)">잠복 (부활 가능)</h2>
+    <p class="hint">손상 판정으로 기각됐지만 삭제되지 않은 가지. 갈릴레오 문제.</p>
+    <div id="dormant"></div>
+  </section>
+
+  <!-- 중: 폴립층 -->
+  <section class="polyp">
+    <h2>폴립층 (활성면)</h2>
+    <p class="hint">후보 노드. 스테이킹·실측으로 근거를 쌓고 승격 심사를 받는다.
+      판정 기준은 낯섦이 아니라 <b>손상</b>이다.</p>
+    <button class="primary" onclick="promoteAll()">관문 틱 — 폴립층 일괄 심사</button>
+    <div id="polyps" style="margin-top:12px"></div>
+  </section>
+
+  <!-- 우: 문답 -->
+  <section class="ask">
+    <h2>문답 (한 바퀴의 입구)</h2>
+    <p class="hint">질문 → 정본 주입 → 기저 답 → P→I→C 구조화. 문답의 소유자는 사용자다.</p>
+
+    <label>참여자</label>
+    <input id="author" value="anon" placeholder="이름">
+
+    <label>질문</label>
+    <textarea id="question" placeholder="예: 파국적 망각은 왜 버그가 아니라 논리적 귀결인가?"></textarea>
+    <div class="actions">
+      <button class="primary" id="askBtn" onclick="ask()">질문하기</button>
+    </div>
+
+    <div id="turn"></div>
+
+    <div class="wheel">
+      한 바퀴: <b>질문</b> → 기저 LLM 답변 → P→I→C 구조화 → 사용자 승인/증분 →
+      스테이킹·실측 → 승격 판정(손상 시험) → <b>정본에 굳음</b> → 다음 질문에 주입.<br>
+      기저 LLM 은 <b>산출물 층위로만</b> 접합된다 — 교체 가능한 부품이다.
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+let currentTurn = null;
+
+function toast(msg, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = isErr ? 'err' : '';
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.style.display = 'none', 6000);
+}
+
+async function call(url, body){
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body || {})
+  });
+  const data = await res.json().catch(() => ({error: 'bad response'}));
+  if (!res.ok) throw new Error(data.error || data.detail || ('HTTP ' + res.status));
+  return data;
+}
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function author(){ return document.getElementById('author').value.trim() || 'anon'; }
+
+function nodeCard(n, kind){
+  const tags = [
+    `<span class="tag type">${esc(n.type)}</span>`,
+    `<span class="tag">stake ${n.stake}</span>`,
+    `<span class="tag">권위 ${n.authority}</span>`,
+    `<span class="tag">by ${esc(n.author)}</span>`,
+  ];
+  if (n.verified) tags.push('<span class="tag verified">✓ 실측 검증</span>');
+  if (kind === 'polyp') tags.push(`<span class="tag">관찰 ${n.observed_ticks}틱</span>`);
+
+  let actions = '';
+  if (kind === 'polyp') {
+    actions = `<div class="actions">
+      <button onclick="stake('${n.id}')">스테이킹</button>
+      <button onclick="measure('${n.id}')">실측 닻</button>
+      <button class="primary" onclick="promote('${n.id}')">승격 심사</button>
+    </div>`;
+  } else if (kind === 'dormant') {
+    actions = `<div class="actions">
+      <button class="ghost" onclick="revive('${n.id}')">부활시키기</button>
+    </div>`;
+  }
+  const verdicts = (n.verdicts && n.verdicts.length)
+    ? `<div class="verdicts">${n.verdicts.map(esc).join('\n')}</div>` : '';
+
+  return `<div class="node ${kind}">
+    <div class="title">${esc(n.title)}</div>
+    ${n.content ? `<div class="body">${esc(n.content.slice(0, 600))}</div>` : ''}
+    <div class="meta">${tags.join('')}</div>
+    ${verdicts}${actions}
+  </div>`;
+}
+
+async function refresh(){
+  const res = await fetch('/api/state');
+  const s = await res.json();
+  const put = (id, html, empty) =>
+    document.getElementById(id).innerHTML = html || `<div class="empty">${empty}</div>`;
+
+  put('canonical', s.canonical.map(n => nodeCard(n, 'canonical')).join(''),
+      '아직 굳은 지식이 없다. 폴립을 승격시키면 여기 쌓이고, 다음 질문에 주입된다.');
+  put('polyps', s.polyps.map(n => nodeCard(n, 'polyp')).join(''),
+      '폴립층이 비었다. 질문을 던지면 후보 노드가 생긴다.');
+  put('dormant', s.dormant.map(n => nodeCard(n, 'dormant')).join(''),
+      '잠복 중인 가지 없음.');
+
+  const st = s.stats;
+  document.getElementById('stats').innerHTML =
+    `<span>정본 <b>${st.canonical}</b></span><span>폴립 <b>${st.polyp}</b></span>
+     <span>잠복 <b>${st.dormant}</b></span><span>문답 <b>${st.turns}</b></span>
+     <span>유동성 풀 <b>${st.liquidity_pool}</b></span>`;
+}
+
+async function ask(){
+  const q = document.getElementById('question').value.trim();
+  if (!q) return toast('질문이 비었다', true);
+  const btn = document.getElementById('askBtn');
+  btn.disabled = true; btn.textContent = '기저에 묻는 중…';
+  try {
+    const data = await call('/api/ask', {question: q, author: author()});
+    currentTurn = data.turn_id;
+    const injected = data.injected_ids.length
+      ? `<div class="injected">↺ 주입된 정본 ${data.injected_ids.length}건 —
+         승격 (a)경로가 이 답에 실제로 참조됐다.</div>`
+      : `<div class="injected" style="color:var(--dim)">주입된 정본 없음
+         (관련 있는 굳은 지식이 아직 없다).</div>`;
+    const warn = data.structuring_fallback
+      ? `<div class="injected" style="color:var(--polyp)">⚠ 자동 P→I→C 구조화 미완 —
+         아래 증분으로 손수 채워라.</div>` : '';
+    document.getElementById('turn').innerHTML = `
+      <div class="answer">${esc(data.answer)}${injected}${warn}</div>
+      <label>가치 증분 (교정·보강). 비우고 "그대로 채택" 가능</label>
+      <textarea id="increment" placeholder="기저 답에서 틀렸거나 빠진 것을 적으면 새 폴립이 된다"></textarea>
+      <div class="actions">
+        <button class="primary" onclick="respond(true)">그대로 채택 + 증분 저장</button>
+        <button onclick="respond(false)">채택 안 함 (증분만)</button>
+      </div>`;
+    document.getElementById('question').value = '';
+    toast(`포획 완료 — 폴립 ${data.node_ids.length}개 생성 (기저: ${data.model})`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = '질문하기'; }
+}
+
+async function respond(accept){
+  if (!currentTurn) return;
+  const inc = document.getElementById('increment').value;
+  try {
+    const d = await call(`/api/turns/${currentTurn}/respond`,
+      {accept, increment: inc, author: author()});
+    toast(d.increment_node_id ? '증분이 새 폴립으로 저장됐다' : '채택 기록됨');
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function stake(id){
+  const amount = prompt('스테이킹할 포인트 (큰 스테이크는 기여를 동반해야 한다)', '30');
+  if (!amount) return;
+  try {
+    const d = await call(`/api/nodes/${id}/stake`,
+      {account: author(), amount: parseFloat(amount)});
+    const div = Object.keys(d.dividends || {}).length
+      ? ` · 배당 ${JSON.stringify(d.dividends)}` : '';
+    toast(`누적 스테이크 ${d.total_staked} · 잔액 ${d.balance.toFixed(1)}${div}`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function measure(id){
+  const metric = prompt('측정 지표 (예: 웰드라인 불량률)');
+  if (!metric) return;
+  const baseline = parseFloat(prompt('기준값 (개선 전)'));
+  const observed = parseFloat(prompt('관측값 (개선 후)'));
+  if (isNaN(baseline) || isNaN(observed)) return toast('숫자를 입력해라', true);
+  const dir = confirm('클수록 좋은 지표인가? (취소 = 작을수록 좋음)')
+    ? 'higher_better' : 'lower_better';
+  try {
+    const d = await call(`/api/nodes/${id}/measure`,
+      {metric, baseline, observed, direction: dir, reporter: author()});
+    toast(d.passes
+      ? `✓ 닻 통과 — 상대 개선 ${(d.relative_improvement * 100).toFixed(1)}%. 스테이크 문턱이 면제된다.`
+      : `✗ 닻 실패 — 상대 개선 ${(d.relative_improvement * 100).toFixed(1)}%`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function promote(id){
+  try {
+    const d = await call(`/api/nodes/${id}/promote`);
+    const label = {promote: '✓ 승격 — 정본에 굳었다',
+                   hold: '· 보류 — 폴립층 유지',
+                   damage: '✗ 손상 판정 — 잠복으로'}[d.verdict];
+    toast(`${label}\n${d.reason}`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function promoteAll(){
+  try {
+    const d = await call('/api/promote-all');
+    const c = {promote: 0, hold: 0, damage: 0};
+    d.results.forEach(r => c[r.verdict]++);
+    toast(`관문 틱 — ${d.judged}건 심사: 승격 ${c.promote} · 보류 ${c.hold} · 손상 ${c.damage}`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function revive(id){
+  try {
+    await call(`/api/nodes/${id}/revive`, {finder: author()});
+    toast('부활 — 원 스테이커 복원 + 발견자 보너스');
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+refresh();
+</script>
+</body>
+</html>
