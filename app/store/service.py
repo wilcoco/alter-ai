@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import func, select as sa_select
@@ -38,7 +38,14 @@ from app.core.ontology import (
     Ontology,
     OntologyError,
 )
-from app.core.promotion import PromotionPolicy, Verdict, apply as apply_decision, judge
+from app.core.promotion import (
+    Advisory,
+    GateReason,
+    PromotionPolicy,
+    Verdict,
+    apply as apply_decision,
+    judge,
+)
 from app.core.verification import Direction, Measurement, VerificationRegistry
 from app.store import db
 
@@ -170,9 +177,118 @@ def ensure_account(session: Session, account_id: str) -> db.Account:
 
 def _policy() -> PromotionPolicy:
     return PromotionPolicy(
-        stake_threshold=settings.promotion_stake_threshold,
+        recognition_threshold=settings.recognition_threshold,
         quarantine_ticks=settings.quarantine_ticks,
     )
+
+
+def recognition_of(ontology: Ontology, node_id: str) -> float:
+    """관문 지표 — 누적 인정 지수 (순서·허브 가중 권위).
+
+    특허 10-0913256 의 기관이 여기서 관문에 연결된다. 원시 스테이크 합이 아닌
+    이유: 밴드왜건 내성(늦은 편승은 거의 못 번다)과 안목 가중(입증된 평가자의
+    인정이 더 무겁다)이 산식에 내장되어 있기 때문이다. 스테이크는 경제적
+    잠금으로 병존하되 관문 지표는 권위다.
+
+    ⚠ 현 `scoring.py` 는 특허의 제3 변주(순위 감쇠 `weight/j`)이며 청구항 8의
+    평균 정규화가 빠져 있다. 산식이 관문 지표가 된 이상 이것은 공개 규약이다 —
+    차이는 `app/core/scoring.py` 상단과 docs/promotion-gate-spec.md §3.5 에 기록.
+    """
+    return ontology.authority_of(node_id)
+
+
+# ---------------------------------------------------------------------------
+# 0. 검색 선점 — 불변 코어 루프의 2단계
+# ---------------------------------------------------------------------------
+
+def search(session: Session, query: str, *, viewer: str = "") -> dict[str, Any]:
+    """**LLM 을 부르기 전에** 기존 문답을 보여준다 (spec §0 STEP 2).
+
+    주입과 다르다: 주입은 LLM 을 *더 잘* 부르는 것이고, 이것은 LLM 을 *안* 부르는
+    것이다. 히트해서 여기서 끝나면 그것이 성공이지 이탈이 아니다.
+
+    그리고 이 화면이 곧 심사대다 — 결과에 폴립도 포함되고, 각 항목에 판단에
+    필요한 상태(검증/검토중/⚠반박)가 동봉된다 (spec §3 검색-노출-석회화 회로).
+    """
+    query = query.strip()
+    if not query:
+        return {"query": "", "results": [], "explored": []}
+
+    ontology = build_ontology(session)
+    registry = build_registry(session)
+    ledger = build_ledger(session)
+
+    # 문답(qa) 노드도 검색 대상이다 — "누가 무엇을 묻고 무엇을 얻었는가"가
+    # 사용자에게 가장 자연스러운 재사용 단위다. 잠복만 제외한다
+    # (잠복은 "밀려난 답" 표면이 따로 맡는다).
+    visible = [
+        n for n in ontology.nodes.values() if n.status is not NodeStatus.DORMANT
+    ]
+    authority = {n.id: ontology.authority_of(n.id) for n in visible}
+    hits, explored = injection.search(
+        query,
+        visible,
+        authority=authority,
+        top_k=settings.search_top_k,
+        explore_quota=settings.explore_quota,
+    )
+
+    results = []
+    for node in hits:
+        pending = ontology.pending_refuters_of(node.id)
+        results.append(
+            {
+                "id": node.id,
+                "type": node.type.value,
+                "title": node.title,
+                "content": node.content[:600],
+                "author": node.author,
+                "status": node.status.value,
+                "verified": registry.is_verified(node.id),
+                "recognition": round(authority.get(node.id, 0.0), 2),
+                "stake": round(ledger.total_staked(node.id), 2),
+                "challenged": bool(pending),
+                "challenges": [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "author": r.author,
+                        "stake": round(ledger.total_staked(r.id), 2),
+                    }
+                    for r in pending
+                ],
+                "explore_slot": node.id in explored,
+                "measurements": _measurement_view(session, node.id),
+            }
+        )
+    return {"query": query, "results": results, "explored": sorted(explored)}
+
+
+def _measurement_view(session: Session, node_id: str) -> list[dict[str, Any]]:
+    rows = session.scalars(
+        sa_select(db.MeasurementRow).where(db.MeasurementRow.node_id == node_id)
+    ).all()
+    out = []
+    for row in rows:
+        m = Measurement(
+            metric=row.metric,
+            baseline=row.baseline,
+            observed=row.observed,
+            direction=Direction(row.direction),
+            unit=row.unit,
+            min_rel_improvement=row.min_rel_improvement,
+        )
+        out.append(
+            {
+                "metric": row.metric,
+                "baseline": row.baseline,
+                "observed": row.observed,
+                "unit": row.unit,
+                "passes": m.passes,
+                "improvement": round(m.relative_improvement, 4),
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +303,9 @@ class AskResult:
     node_ids: list[str]
     summary: str
     fallback: bool
+    #: 주입된 정본의 {id, title, author, challenged} — 기여자가 자기 지식이
+    #: 쓰였다는 것을 볼 수 있어야 기여할 이유가 생긴다 (정산 역류의 표면)
+    injected: list[dict[str, Any]] = field(default_factory=list)
 
 
 def ask(session: Session, question: str, author: str) -> AskResult:
@@ -248,6 +367,16 @@ def ask(session: Session, question: str, author: str) -> AskResult:
     )
     node_ids.insert(0, qa_id)
 
+    injected = [
+        {
+            "id": n.id,
+            "title": n.title,
+            "author": n.author,
+            "challenged": ontology.is_challenged(n.id),
+        }
+        for n in chosen
+    ]
+
     session.commit()
     return AskResult(
         turn_id=turn_id,
@@ -256,6 +385,7 @@ def ask(session: Session, question: str, author: str) -> AskResult:
         node_ids=node_ids,
         summary=graph.summary,
         fallback=graph.fallback,
+        injected=injected,
     )
 
 
@@ -369,8 +499,19 @@ def respond(
 # 3. 스테이킹 / 실측 닻
 # ---------------------------------------------------------------------------
 
-def stake(session: Session, node_id: str, account: str, amount: float) -> dict[str, Any]:
-    """확신을 건다. 배당은 검증된 가지에서만 나간다."""
+def stake(
+    session: Session,
+    node_id: str,
+    account: str,
+    amount: float,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """확신을 건다. 배당은 검증된 가지에서만 나간다.
+
+    스테이킹은 곧 **링크**다 — 순서가 기록되어 누적 인정 지수(관문 지표)를
+    만든다. 무비용 클릭은 절대 링크로 세지 않는다 (대리변수 금지).
+    """
     node_row = session.get(db.NodeRow, node_id)
     if node_row is None:
         raise ServiceError(f"unknown node {node_id!r}")
@@ -387,9 +528,15 @@ def stake(session: Session, node_id: str, account: str, amount: float) -> dict[s
     except (OntologyError, InsufficientPoints) as exc:
         raise ServiceError(str(exc)) from exc
 
-    session.add(db.StakeRow(node_id=node_id, account=account, amount=amount))
+    session.add(
+        db.StakeRow(node_id=node_id, account=account, amount=amount, reason=reason)
+    )
     # 스테이킹은 곧 링크다 — 순서가 기록되고 안목이 계산된다.
+    # 스테이킹 = 링크. **가중치는 항상 1.0** — 액수가 아니라 순서와 안목이
+    # 관문 지표를 만든다 (돈으로 가중치를 사지 못하게).
     session.add(db.LinkRow(node_id=node_id, evaluator=account, weight=1.0))
+    # 방금 추가한 링크를 인메모리 스코어러에도 먹여야 응답의 인정 값이 최신이 된다.
+    ontology.endorse(account, node_id, weight=1.0)
 
     economy = Economy(ledger=ledger)
     payouts = economy.distribute_dividend(
@@ -405,6 +552,7 @@ def stake(session: Session, node_id: str, account: str, amount: float) -> dict[s
         "node_id": node_id,
         "staked": amount,
         "total_staked": total_stake(session, node_id),
+        "recognition": round(recognition_of(ontology, node_id), 3),
         "dividends": payouts,
         "balance": ledger.balance(account),
     }
@@ -468,6 +616,159 @@ def measure(
 
 
 # ---------------------------------------------------------------------------
+# 3.5 사람의 반증 / 분기 / 기저 제보
+# ---------------------------------------------------------------------------
+
+def refute(
+    session: Session,
+    node_id: str,
+    *,
+    author: str,
+    reason: str,
+    claim: str,
+    stake_amount: float,
+) -> dict[str, Any]:
+    """반증 — **기존 노드를 고치지 않고 형제 노드를 세운다.**
+
+    설계 원칙 3개가 여기 한꺼번에 구현된다:
+
+    * 원본 불변 (reconcile 금지 — 갈릴레오 보존). 반증은 새 노드 + ``refutes``
+      엣지이지 편집이 아니다.
+    * **입증 책임** — 스테이크 필수(``refute_min_stake`` 이상). 공짜 거부권 금지.
+    * "반증했다"가 아니라 **"반증이 검증됐다"가 손상**이다. 반증 노드도 폴립으로
+      태어나 스스로 관문을 통과해야 대상을 재심시킨다. 그때까지는 대상에
+      ``challenged`` 로 동행할 뿐 승격을 차단하지 않는다 (spec §5).
+    """
+    target_row = session.get(db.NodeRow, node_id)
+    if target_row is None:
+        raise ServiceError(f"unknown node {node_id!r}")
+    if not claim.strip():
+        raise ServiceError("반증에는 다른 답(주장)이 필요하다")
+    if stake_amount < settings.refute_min_stake:
+        raise ServiceError(
+            f"반증에는 최소 {settings.refute_min_stake:.0f}pt 의 확신이 필요하다 "
+            "— 입증 책임은 반증하는 쪽에 있다"
+        )
+    if target_row.author == author:
+        raise ServiceError("자기 노드는 반증할 수 없다 (분기를 쓸 것)")
+
+    refuter_id = _add_node(
+        session,
+        type=NodeType.CLAIM,
+        title=claim.strip().split("\n")[0][:200],
+        content=claim.strip(),
+        author=author,
+        turn_id=target_row.turn_id,
+    )
+    session.add(
+        db.EdgeRow(
+            id=_uid("e"),
+            source_id=refuter_id,
+            target_id=node_id,
+            type=EdgeType.REFUTES.value,
+        )
+    )
+    session.flush()
+    staked = stake(session, refuter_id, author, stake_amount, reason=reason)
+    return {
+        "refuter_id": refuter_id,
+        "target_id": node_id,
+        "reason": reason,
+        "stake": staked["staked"],
+        "note": "기존 답은 그대로 유지된다. 이 반증이 검증을 통과하면 대상이 재심된다.",
+    }
+
+
+def fork(
+    session: Session, node_id: str, *, author: str, answer: str, stake_amount: float = 0.0
+) -> dict[str, Any]:
+    """분기 — 모순 주장이 아니라 **경쟁하는 다른 답**.
+
+    반증(refutes)과 달리 대상을 손상시키지 않는다. 시스템은 답을 하나로
+    합치지 않고 형제로 공존시킨다 — 현실이 결판낸다.
+    """
+    target_row = session.get(db.NodeRow, node_id)
+    if target_row is None:
+        raise ServiceError(f"unknown node {node_id!r}")
+    if not answer.strip():
+        raise ServiceError("분기에는 다른 답이 필요하다")
+
+    fork_id = _add_node(
+        session,
+        type=NodeType.CLAIM,
+        title=answer.strip().split("\n")[0][:200],
+        content=answer.strip(),
+        author=author,
+        turn_id=target_row.turn_id,
+    )
+    session.add(
+        db.EdgeRow(
+            id=_uid("e"),
+            source_id=fork_id,
+            target_id=node_id,
+            type=EdgeType.RELATES_TO.value,
+        )
+    )
+    session.flush()
+    if stake_amount > 0:
+        stake(session, fork_id, author, stake_amount)
+    else:
+        session.commit()
+    return {"fork_id": fork_id, "target_id": node_id}
+
+
+def advise(session: Session, node_id: str, *, requested_by: str = "") -> dict[str, Any]:
+    """기저 LLM 제보 요청 — **판정권 없음. 사람 눈앞에 올리기만 한다.**
+
+    결과는 :class:`AdvisoryRow` 로 전량 보존·공개되며, 관문 판정에는 어떤
+    경로로도 입력되지 않는다 (:mod:`app.core.promotion` 참조).
+    """
+    if session.get(db.NodeRow, node_id) is None:
+        raise ServiceError(f"unknown node {node_id!r}")
+
+    llm = get_llm()
+    if llm.name == "stub":
+        return {"advisories": [], "note": "기저 LLM 미연결 — 제보 없음"}
+
+    ontology = build_ontology(session)
+    candidate = ontology.require(node_id)
+    canonical = [n for n in ontology.canonical() if n.id != node_id]
+    if not canonical:
+        return {"advisories": [], "note": "검증된 정본이 아직 없다"}
+
+    try:
+        advisories: list[Advisory] = damage_mod.make_advisor(llm)(candidate, canonical)
+    except Exception as exc:
+        log.warning("제보자 호출 실패: %s", exc)
+        return {"advisories": [], "note": f"제보자 호출 실패: {exc}"}
+
+    for a in advisories:
+        session.add(
+            db.AdvisoryRow(
+                candidate_id=a.candidate_id,
+                canonical_id=a.canonical_id,
+                detail=a.detail,
+                confidence=a.confidence,
+                model=a.model,
+                requested_by=requested_by,
+            )
+        )
+    session.commit()
+    return {
+        "advisories": [
+            {
+                "canonical_id": a.canonical_id,
+                "detail": a.detail,
+                "confidence": a.confidence,
+                "model": a.model,
+            }
+            for a in advisories
+        ],
+        "note": "AI 가 찾은 충돌 후보입니다. 판단은 사람이 합니다 — 동의하면 반증하세요.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # 4. 승격 판정 (석회화)
 # ---------------------------------------------------------------------------
 
@@ -480,10 +781,12 @@ def _write_node(session: Session, node: Node) -> None:
     row.verdicts = "\n".join(node.verdicts)
 
 
-def promote(
-    session: Session, node_id: str, *, use_probe: bool = True
-) -> dict[str, Any]:
-    """한 후보에 대한 석회화 판정 → 반영 → 기록."""
+def promote(session: Session, node_id: str) -> dict[str, Any]:
+    """한 후보에 대한 석회화 판정 → 반영 → 기록 → **재심 캐스케이드**.
+
+    기저 LLM 을 호출하지 않는다. 판정 입력은 사람이 만든 증거(검증된 반증·
+    스테이크로 쌓인 인정)와 현실(실측)뿐이다.
+    """
     if session.get(db.NodeRow, node_id) is None:
         raise ServiceError(f"unknown node {node_id!r}")
 
@@ -492,19 +795,14 @@ def promote(
     registry = build_registry(session)
     node = ontology.require(node_id)
 
-    probe = None
-    if use_probe:
-        llm = get_llm()
-        if llm.name != "stub":
-            probe = damage_mod.make_probe(llm)
-
     decision = judge(
         node,
         ontology,
+        recognition=recognition_of(ontology, node_id),
         stake=ledger.total_staked(node_id),
         registry=registry,
         policy=_policy(),
-        probe=probe,
+        challenged=ontology.is_challenged(node_id),
     )
 
     economy = Economy(ledger=ledger)
@@ -515,6 +813,7 @@ def promote(
         economy.reclaim_dormant(nid)
         reclaimed.append(nid)
 
+    was_polyp = node.status is NodeStatus.POLYP
     ontology.tick()
     apply_decision(decision, node, ontology, on_dormant=on_dormant)
     _write_node(session, node)
@@ -531,42 +830,57 @@ def promote(
         db.PromotionRow(
             node_id=node_id,
             verdict=decision.verdict.value,
+            reason_code=decision.reason_code.value,
             reason=decision.reason,
             damage_summary=decision.damage.summary(),
-            probed=decision.damage.probed,
+            recognition=decision.recognition,
             stake=decision.stake,
             anchored=decision.anchored,
+            challenged=decision.challenged,
         )
     )
+
+    # 재심 캐스케이드: 반증이 방금 정본이 되었다면 그것이 겨눈 대상을 즉시 재심한다.
+    # 정본도 예외가 아니다 — "느리게 사는 층" (spec §4).
+    cascaded: list[str] = []
+    if was_polyp and decision.promoted:
+        cascaded = ontology.refutation_targets(node_id)
+
     _flush_balances(session, ledger)
     session.commit()
 
+    result = _decision_view(node_id, decision, node)
+    if cascaded:
+        result["cascade"] = [promote(session, target) for target in cascaded]
+    return result
+
+
+def _decision_view(
+    node_id: str, decision, node: Node
+) -> dict[str, Any]:
     return {
         "node_id": node_id,
         "verdict": decision.verdict.value,
+        "reason_code": decision.reason_code.value,
         "reason": decision.reason,
+        "challenged": decision.challenged,
         "damage": {
             "damaged": decision.damage.damaged,
-            "probed": decision.damage.probed,
             "summary": decision.damage.summary(),
             "notes": decision.damage.notes,
             "conflicts": [
-                {
-                    "canonical_id": c.canonical_id,
-                    "kind": c.kind,
-                    "detail": c.detail,
-                    "confidence": c.confidence,
-                }
+                {"canonical_id": c.canonical_id, "kind": c.kind, "detail": c.detail}
                 for c in decision.damage.conflicts
             ],
         },
+        "recognition": round(decision.recognition, 3),
         "stake": decision.stake,
         "anchored": decision.anchored,
         "status": node.status.value,
     }
 
 
-def promote_all(session: Session, *, use_probe: bool = True) -> list[dict[str, Any]]:
+def promote_all(session: Session) -> list[dict[str, Any]]:
     """폴립층 전체를 한 번 심사한다 (관문 틱)."""
     polyp_ids = [
         row.id
@@ -576,7 +890,13 @@ def promote_all(session: Session, *, use_probe: bool = True) -> list[dict[str, A
             .order_by(db.NodeRow.seq)
         ).all()
     ]
-    return [promote(session, node_id, use_probe=use_probe) for node_id in polyp_ids]
+    results = []
+    for node_id in polyp_ids:
+        row = session.get(db.NodeRow, node_id)
+        if row is None or row.status != NodeStatus.POLYP.value:
+            continue   # 앞선 캐스케이드가 이미 처리했을 수 있다
+        results.append(promote(session, node_id))
+    return results
 
 
 def revive(session: Session, node_id: str, finder: str) -> dict[str, Any]:
@@ -640,6 +960,49 @@ def node_view(session: Session, ontology: Ontology, node: Node) -> dict[str, Any
         "authority": round(ontology.authority_of(node.id), 3),
         "verified": build_registry(session).is_verified(node.id),
         "verdicts": node.verdicts,
+    }
+
+
+def my_activity(session: Session, account: str) -> dict[str, Any]:
+    """S6 내 활동 — **H3(환류)의 측정면.**
+
+    ``reused`` 가 이 화면의 존재 이유다: 내 기여가 남의 답에 쓰인 횟수가 보이지
+    않으면 기여는 반복되지 않는다 (정산 역류의 사용자 표면).
+    """
+    ensure_account(session, account)
+    ontology = build_ontology(session)
+    ledger = build_ledger(session)
+    registry = build_registry(session)
+
+    # 내 노드가 다른 문답에 주입된 횟수 — Turn.injected_ids 를 역인덱싱한다.
+    mine = [n for n in ontology.nodes.values() if n.author == account]
+    mine_ids = {n.id for n in mine}
+    reuse_count: dict[str, int] = {nid: 0 for nid in mine_ids}
+    for turn in session.scalars(sa_select(db.Turn)).all():
+        for nid in (turn.injected_ids or "").split(","):
+            if nid in reuse_count:
+                reuse_count[nid] += 1
+
+    contributions = [
+        {
+            "id": n.id,
+            "title": n.title,
+            "status": n.status.value,
+            "verified": registry.is_verified(n.id),
+            "challenged": ontology.is_challenged(n.id),
+            "recognition": round(ontology.authority_of(n.id), 2),
+            "reused": reuse_count.get(n.id, 0),
+        }
+        for n in sorted(mine, key=lambda n: -n.created_at)
+    ][:40]
+
+    return {
+        "account": account,
+        "balance": round(ledger.balance(account), 2),
+        "staked": round(ledger.staked_by(account), 2),
+        "insight": round(ontology.hub_of(account), 2),
+        "reused": sum(reuse_count.values()),
+        "contributions": contributions,
     }
 
 

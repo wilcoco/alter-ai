@@ -1,12 +1,18 @@
-"""의미적 손상 프로브 — :mod:`app.core.promotion` 에 주입되는 v0 구현.
+"""기저 LLM 제보자 — **판정권 없음.**
 
-관문의 질문은 "낯선가"가 아니라 **"통합하면 정본이 손상되는가"**다. 그래서
-프롬프트가 novelty 를 묻지 않는다. 오직 *모순*만 묻는다.
+이 모듈은 후보와 정본 사이의 잠재 충돌을 **사람 눈앞에 올리기만** 한다.
+반환 타입이 :class:`app.core.promotion.Advisory` 인 것이 그 계약이다 —
+손상 판정이 읽는 :class:`Conflict` 와 타입이 갈라져 있고, 둘 사이의 변환은
+코드베이스 어디에도 없다. 제보를 판정으로 승격시키려면 새 코드를 써야 하고,
+그때 이 주석이 왜 그러면 안 되는지 말해줄 것이다.
 
-⚠ 이 프로브의 판정자는 기저 LLM 이다. 즉 **관문이 기저의 판단에 의존한다**는
-순환이 여기 남아 있다 (spec §6-3 "관문의 적응 학습 재귀"의 한 얼굴). 외부 현실
-닻(verification.py)만이 이 순환 밖에 있으며, 그래서 실측이 통과하면 스테이크
-문턱을 면제하도록 정책이 짜여 있다. 프로브를 개선해도 이 순환은 안 풀린다.
+⚠ 왜 이렇게까지 하나 (중력 5 기록): v0 에서는 이 프로브가 판정자였다.
+설계 어디에도 없던 구조였고, §B5 가 요구한 "은폐된 편집 판단의 외재화·분산"의
+역방향이었다. 같은 병이 dapsol(`opinions/evaluate`)에서 독립 재발한 것이
+확인되었으므로 — LLM 판정자는 실수가 아니라 **끌림**이다 — 타입으로 막는다.
+
+남는 위험(정직하게): 무엇을 사람 눈앞에 올릴지 고르는 것 자체가 조용한 의제
+설정 권력이다. "요청 시에만 제보 + 전체 로그 공개"로 최소화할 뿐 소멸하지 않는다.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from typing import Any
 
 from app.capture.llm import BaseLLM
 from app.core.ontology import Node
-from app.core.promotion import Conflict
+from app.core.promotion import Advisory
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +60,8 @@ _SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-_PROMPT = """아래 **후보 지식**을 이 시스템의 **검증된 정본**에 통합하려 한다.
-통합했을 때 정본이 손상되는지만 판정해라.
+_PROMPT = """아래 **후보 지식**과 이 시스템의 **검증된 정본** 사이에 모순이 있어 보이면
+사람이 살펴볼 수 있도록 알려라. 판정은 사람이 한다 — 너는 후보를 지목할 뿐이다.
 
 판정 규칙 (엄격히 지켜라):
 - 손상 = 후보와 정본 항목이 **동시에 참일 수 없다**는 것. 그것만 conflicts 에 넣어라.
@@ -76,15 +82,15 @@ id: {candidate_id}
 {canonical_block}
 """
 
-#: 이보다 낮은 확신의 충돌은 손상으로 세지 않는다. 음성 선택의 보수성 편향
-#: (쿤 문제, spec §6-2)을 조금이라도 눅이려는 완충 — 해결이 아니라 완충이다.
+#: 이보다 낮은 확신의 제보는 사람에게 보여주지 않는다 (소음 억제).
+#: 판정 문턱이 아니다 — 제보는 애초에 판정에 들어가지 않는다.
 CONFIDENCE_FLOOR = 0.6
 
 
-def make_probe(llm: BaseLLM, *, confidence_floor: float = CONFIDENCE_FLOOR):
-    """:func:`app.core.promotion.judge` 에 넘길 ``DamageProbe`` 를 만든다."""
+def make_advisor(llm: BaseLLM, *, confidence_floor: float = CONFIDENCE_FLOOR):
+    """충돌 후보를 제보하는 함수를 만든다. 판정 경로에는 연결되지 않는다."""
 
-    def probe(candidate: Node, canonical: list[Node]) -> list[Conflict]:
+    def advise(candidate: Node, canonical: list[Node]) -> list[Advisory]:
         subset = canonical[:MAX_CANONICAL_PER_PROBE]
         if not subset:
             return []
@@ -102,24 +108,25 @@ def make_probe(llm: BaseLLM, *, confidence_floor: float = CONFIDENCE_FLOOR):
         )
         raw = llm.extract(prompt, _SCHEMA)
         valid_ids = {n.id for n in subset}
-        conflicts: list[Conflict] = []
+        advisories: list[Advisory] = []
         for item in raw.get("conflicts", []):
             cid = str(item.get("canonical_id", "")).strip()
             if cid not in valid_ids:
-                # 존재하지 않는 정본을 지목한 판정은 버린다 (환각 방어).
-                log.warning("손상 프로브가 미지의 정본 id 를 지목: %r", cid)
+                # 존재하지 않는 정본을 지목한 제보는 버린다 (환각 방어).
+                log.warning("제보자가 미지의 정본 id 를 지목: %r", cid)
                 continue
-            confidence = float(item.get("confidence", 0.0) or 0.0)
+            confidence = max(0.0, min(1.0, float(item.get("confidence", 0.0) or 0.0)))
             if confidence < confidence_floor:
                 continue
-            conflicts.append(
-                Conflict(
+            advisories.append(
+                Advisory(
+                    candidate_id=candidate.id,
                     canonical_id=cid,
-                    kind="semantic",
-                    detail=str(item.get("detail", "")).strip() or "모순 (사유 미기재)",
+                    detail=str(item.get("detail", "")).strip() or "충돌 후보 (사유 미기재)",
                     confidence=confidence,
+                    model=getattr(llm, "name", ""),
                 )
             )
-        return conflicts
+        return advisories
 
-    return probe
+    return advise

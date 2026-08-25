@@ -100,6 +100,8 @@ class StakeRow(Base):
     node_id: Mapped[str] = mapped_column(String(64), ForeignKey("nodes.id"), index=True)
     account: Mapped[str] = mapped_column(String(64), index=True)
     amount: Mapped[float] = mapped_column(Float)
+    #: 반증 사유 등 (사실 오류 / 조건 누락 / 재현 안 됨)
+    reason: Mapped[str] = mapped_column(String(64), default="")
     #: 잠복 회수로 유동성 풀에 환원됐는가 (기록은 부활 복원을 위해 남긴다)
     reclaimed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -142,12 +144,36 @@ class PromotionRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     node_id: Mapped[str] = mapped_column(String(64), ForeignKey("nodes.id"), index=True)
     verdict: Mapped[str] = mapped_column(String(16))
+    #: 이유 코드 (GateReason) — 사용자에게 "무엇을 더 하면 되는지" 알려주는 근거
+    reason_code: Mapped[str] = mapped_column(String(40), default="")
     reason: Mapped[str] = mapped_column(Text)
     damage_summary: Mapped[str] = mapped_column(Text, default="")
-    probed: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: 관문 지표 — 누적 인정 지수
+    recognition: Mapped[float] = mapped_column(Float, default=0.0)
+    #: 경제적 잠금 (관문 지표는 아니지만 감사 레코드에 남긴다)
     stake: Mapped[float] = mapped_column(Float, default=0.0)
     anchored: Mapped[bool] = mapped_column(Boolean, default=False)
-    payouts: Mapped[str] = mapped_column(Text, default="")
+    #: 판정 시점에 계류 반증이 있었는가 (차단하지 않고 동행한 신호)
+    challenged: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class AdvisoryRow(Base):
+    """기저 LLM 제보 로그 — **판정 경로에 들어가지 않는다.**
+
+    전량 보존하고 사용자에게 공개한다. 제보자가 무엇을 사람 눈앞에 올렸는지가
+    감사 가능해야, 의제 설정 권력이 최소한 관측이라도 된다.
+    """
+
+    __tablename__ = "advisories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(64), index=True)
+    canonical_id: Mapped[str] = mapped_column(String(64))
+    detail: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    model: Mapped[str] = mapped_column(String(128), default="")
+    requested_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

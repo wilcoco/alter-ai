@@ -5,7 +5,7 @@
 ``damage``  의미적 손상 프로브 (석회화 판정 기관에 주입)
 """
 
-from app.capture.damage import make_probe
+from app.capture.damage import make_advisor
 from app.capture.llm import Answer, BaseLLM, StubLLM, get_llm
 from app.capture.pic import PICGraph, capture
 
@@ -16,5 +16,5 @@ __all__ = [
     "StubLLM",
     "capture",
     "get_llm",
-    "make_probe",
+    "make_advisor",
 ]

@@ -253,6 +253,35 @@ class Ontology:
             if e.type is EdgeType.REFUTES and e.target_id == node_id
         ]
 
+    def pending_refuters_of(self, node_id: str) -> list[Node]:
+        """아직 정본이 되지 못한(계류 중인) 반증들.
+
+        손상 신호가 **아니다** — 승격을 차단하지 않고 ``challenged`` 로 동행해
+        노출·주입 시 ⚠ 로 표기될 뿐이다 (spec §5). 반증이 스스로 관문을
+        통과하는 순간 비로소 손상이 되어 대상을 재심시킨다.
+        """
+        pending = []
+        for edge in self.refuters_of(node_id):
+            source = self.nodes.get(edge.source_id)
+            if source is not None and source.status is NodeStatus.POLYP:
+                pending.append(source)
+        return pending
+
+    def is_challenged(self, node_id: str) -> bool:
+        return bool(self.pending_refuters_of(node_id))
+
+    def refutation_targets(self, node_id: str) -> list[str]:
+        """이 노드가 ``refutes`` 로 겨누는 대상들 — 재심 캐스케이드의 입력.
+
+        반증이 승격되면 그 겨눈 대상들을 즉시 재심해야 한다. 정본도 예외가
+        아니다 (spec §4 정본 재평가).
+        """
+        return [
+            e.target_id
+            for e in self.edges.values()
+            if e.type is EdgeType.REFUTES and e.source_id == node_id
+        ]
+
     def ancestors(self, node_id: str) -> list[tuple[str, str, bool]]:
         """배당 라우팅용 조상 사슬 — ``(node_id, author, value_add)`` 가까운 순.
 

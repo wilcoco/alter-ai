@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>coral — 물어보고, 판단하고, 쌓입니다</title>
+<style>
+  :root{
+    --bg:#F2F4F1; --panel:#FFFFFF; --line:#C9D4CE; --ink:#1C2B2D; --muted:#5C6F70;
+    --calc:#14766B; --calc-soft:#DDEEEA; --coral:#D4553B; --coral-soft:#F7E4DE;
+    --danger:#A33036; --sea:#33618F; --chip:#E8EEEA;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0F191C; --panel:#16242A; --line:#2C3D3E; --ink:#DCE7E3; --muted:#93A6A3;
+      --calc:#3AA893; --calc-soft:#15332E; --coral:#E5745B; --coral-soft:#3A241E;
+      --danger:#D96A67; --sea:#6E9BC7; --chip:#1D2E30;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);
+    border-bottom:1px solid var(--line);padding:10px 20px;display:flex;
+    align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{font-weight:700;font-size:17px;letter-spacing:-.01em}
+  .brand span{color:var(--coral)}
+  .who{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px}
+  .who input{width:110px;padding:5px 10px;border-radius:99px;border:1px solid var(--line);
+    background:var(--panel);color:var(--ink);font:inherit;font-size:13px}
+  .who a{color:var(--muted);font-size:12px;text-decoration:none}
+  .who a:hover{color:var(--ink)}
+  main{max-width:780px;margin:0 auto;padding:26px 20px 80px}
+  .searchbar{display:flex;gap:8px;margin-bottom:8px}
+  .searchbar input{flex:1;padding:14px 20px;border-radius:26px;border:1.8px solid var(--ink);
+    background:var(--panel);color:var(--ink);font:inherit;font-size:15px}
+  .searchbar input:focus{outline:2px solid var(--calc);outline-offset:1px}
+  .hint{font-size:12.5px;color:var(--calc);min-height:20px;margin:0 0 16px 6px}
+  .hint.dim{color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px 18px;margin-bottom:12px}
+  .card.verified{border-color:var(--calc);border-width:2px}
+  .card.explore{border-style:dashed}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;
+    font-size:11.5px}
+  .b{padding:1px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .b.ok{background:var(--calc-soft);border-color:var(--calc);color:var(--calc);font-weight:700}
+  .b.warn{background:var(--coral-soft);border-color:var(--coral);color:var(--coral);font-weight:700}
+  .b.new{border-color:var(--sea);color:var(--sea)}
+  .t{font-weight:700;font-size:15px;margin:2px 0 4px;word-break:break-word}
+  .c{font-size:13.5px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+  .chal{margin-top:8px;padding:8px 12px;border-left:3px solid var(--coral);
+    background:var(--coral-soft);border-radius:0 8px 8px 0;font-size:12.5px}
+  .meas{margin-top:8px;font-size:12.5px;color:var(--calc)}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);
+    border-radius:99px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--ink)}
+  button:disabled{opacity:.5;cursor:default}
+  button.primary{background:var(--calc);border-color:var(--calc);color:#fff;font-weight:700}
+  button.danger{border-color:var(--danger);color:var(--danger)}
+  button.wide{width:100%;padding:13px;border-radius:26px;font-size:14.5px}
+  button.ask{border:2px solid var(--sea);color:var(--sea);font-weight:700}
+  .answer{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:16px 0}
+  .refs{background:var(--calc-soft);border:1px solid var(--calc);border-radius:10px;
+    padding:10px 14px;margin-bottom:14px;font-size:13px}
+  .refs b{color:var(--calc)}
+  .refs .none{color:var(--muted)}
+  .body{white-space:pre-wrap;word-break:break-word;font-size:14.5px}
+  .gap{background:var(--coral-soft);border:1px solid var(--coral);border-radius:10px;
+    padding:12px 16px;margin-top:14px;font-size:13.5px}
+  .gap b{color:var(--coral)}
+  h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);
+    margin:28px 0 10px;font-weight:600}
+  dialog{border:none;border-radius:14px;padding:0;max-width:460px;width:calc(100% - 32px);
+    background:var(--panel);color:var(--ink)}
+  dialog::backdrop{background:rgba(12,20,22,.55)}
+  .sheet{padding:20px 22px 22px}
+  .sheet h3{margin:0 0 2px;font-size:17px}
+  .sheet .sub{font-size:12.5px;color:var(--muted);margin-bottom:14px}
+  .sheet label{display:block;font-size:11.5px;color:var(--muted);margin:12px 0 4px;
+    text-transform:uppercase;letter-spacing:.5px}
+  .sheet textarea,.sheet input[type=text]{width:100%;padding:10px 12px;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;
+    font-size:14px;resize:vertical}
+  .sheet textarea{min-height:88px}
+  .sheet input[type=range]{width:100%}
+  .pts{font-size:13px;color:var(--muted);display:flex;justify-content:space-between}
+  .pts b{color:var(--ink);font-size:15px}
+  .reasons{display:flex;gap:6px;flex-wrap:wrap}
+  .reasons button.on{background:var(--chip);border-color:var(--ink);font-weight:700}
+  .note{font-size:12.5px;color:var(--danger);margin-top:10px}
+  .note.calc{color:var(--calc)}
+  .sheetacts{display:flex;gap:8px;margin-top:18px}
+  .sheetacts button{flex:1;padding:11px;border-radius:99px;font-weight:700}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:28px 10px;
+    border:1px dashed var(--line);border-radius:12px}
+  .mine{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .stat .n{font-size:22px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--muted)}
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;max-width:520px;
+    width:calc(100% - 36px);background:var(--ink);color:var(--bg);border-radius:12px;
+    padding:12px 18px;font-size:13.5px;display:none;white-space:pre-wrap;z-index:20}
+  #toast.err{background:var(--danger);color:#fff}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">🪸 co<span>ral</span></div>
+  <div class="who">
+    <span>나:</span><input id="me" value="anon" aria-label="내 이름">
+    <span id="bal" class="b">–</span>
+    <a href="#" onclick="showMine();return false">내 활동</a>
+    <a href="/console" title="운영자 콘솔">⚙</a>
+  </div>
+</header>
+
+<main>
+  <div class="searchbar">
+    <input id="q" placeholder="무엇이 궁금하세요?" autocomplete="off"
+           aria-label="질문 또는 검색어">
+  </div>
+  <p class="hint dim" id="hint">먼저 다른 사람들의 문답에서 찾아봅니다.</p>
+
+  <div id="results"></div>
+  <div id="askbox"></div>
+  <div id="thread"></div>
+  <div id="mine"></div>
+</main>
+
+<dialog id="sheet"><div class="sheet" id="sheetBody"></div></dialog>
+<div id="toast" role="status"></div>
+
+<script>
+const CFG = {
+  refuteMin: {{ refute_min_stake }},
+  threshold: {{ recognition_threshold }},
+  llm: "{{ llm }}",
+  llmOn: {{ 'true' if llm_enabled else 'false' }}
+};
+let lastQuery = "", currentTurn = null, sheetTarget = null, sheetReason = "";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const me = () => $("me").value.trim() || "anon";
+
+function toast(msg, err){
+  const t = $("toast"); t.textContent = msg; t.className = err ? "err" : "";
+  t.style.display = "block"; clearTimeout(t._t);
+  t._t = setTimeout(()=>t.style.display="none", 5200);
+}
+async function call(url, body, method){
+  const opt = {method: method || "POST", headers:{"Content-Type":"application/json"}};
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(url, opt);
+  const d = await r.json().catch(()=>({error:"응답을 읽지 못했습니다"}));
+  if (!r.ok) throw new Error(d.error || d.detail || ("HTTP " + r.status));
+  return d;
+}
+
+/* ---------- S2 검색 결과: 노출면이 곧 심사대 ---------- */
+function card(n){
+  const badges = [];
+  if (n.verified) badges.push('<span class="b ok">✓ 검증됨</span>');
+  else badges.push('<span class="b">검토 중</span>');
+  if (n.challenged) badges.push('<span class="b warn">⚠ 반박 있음</span>');
+  if (n.explore_slot) badges.push('<span class="b new">아직 판단이 필요해요</span>');
+  badges.push(`<span class="b">인정 ${n.recognition}</span>`);
+  badges.push(`<span class="b">by ${esc(n.author)}</span>`);
+
+  const chal = (n.challenges||[]).map(c =>
+    `<div class="chal">반박 — ${esc(c.title)} <span style="opacity:.7">(${esc(c.author)} · 확신 ${c.stake}pt)</span></div>`
+  ).join("");
+
+  const meas = (n.measurements||[]).filter(m=>m.passes).map(m =>
+    `<div class="meas">✓ 실제 결과: ${esc(m.metric)} ${m.baseline} → ${m.observed}${esc(m.unit||"")}</div>`
+  ).join("");
+
+  return `<article class="card ${n.verified?'verified':''} ${n.explore_slot?'explore':''}">
+    <div class="badges">${badges.join("")}</div>
+    <div class="t">${esc(n.title)}</div>
+    ${n.content ? `<div class="c">${esc(n.content.slice(0,320))}</div>` : ""}
+    ${chal}${meas}
+    <div class="acts">
+      <button onclick="openAgree('${n.id}')">도움됐어요</button>
+      <button class="danger" onclick="openRefute('${n.id}')">틀렸어요</button>
+      <button onclick="openAdd('${n.id}')">보탤게요</button>
+      ${n.verified ? `<button onclick="openMeasure('${n.id}')">해봤어요</button>` : ""}
+      ${CFG.llmOn ? `<button onclick="askAdvice('${n.id}')" title="판단은 사람이 합니다">AI 충돌 점검</button>` : ""}
+    </div>
+  </article>`;
+}
+
+let timer = null;
+$("q").addEventListener("input", () => {
+  clearTimeout(timer); timer = setTimeout(runSearch, 320);
+});
+$("q").addEventListener("keydown", e => { if (e.key === "Enter"){ clearTimeout(timer); runSearch(); }});
+
+async function runSearch(){
+  const q = $("q").value.trim();
+  $("mine").innerHTML = "";
+  if (!q){ $("results").innerHTML=""; $("askbox").innerHTML="";
+    $("hint").textContent="먼저 다른 사람들의 문답에서 찾아봅니다."; $("hint").className="hint dim"; return; }
+  lastQuery = q;
+  const d = await fetch("/api/search?q=" + encodeURIComponent(q)).then(r=>r.json());
+  const n = d.results.length;
+  $("hint").textContent = n
+    ? `먼저 찾아봤어요 — 관련된 문답 ${n}건 · AI 호출 없음`
+    : "아직 이 주제의 문답이 없어요.";
+  $("hint").className = n ? "hint" : "hint dim";
+  $("results").innerHTML = d.results.map(card).join("");
+  $("askbox").innerHTML = `<button class="wide ask" onclick="askAI()">
+    ${n ? "찾는 답이 없어요 — AI 에게 물어보기" : "AI 에게 물어보기"}</button>`;
+  $("thread").innerHTML = "";
+}
+
+/* ---------- S3 AI 답변 ---------- */
+async function askAI(){
+  const q = $("q").value.trim() || lastQuery;
+  if (!q) return toast("무엇이 궁금한지 적어주세요", true);
+  const btn = document.querySelector("#askbox button");
+  if (btn){ btn.disabled = true; btn.textContent = "AI 에게 묻는 중…"; }
+  try{
+    const d = await call("/api/ask", {question:q, author:me()});
+    currentTurn = d.turn_id;
+    const refs = d.injected && d.injected.length
+      ? `<div class="refs"><b>✓ 검증된 지식 ${d.injected.length}건이 이 답에 쓰였습니다</b><br>` +
+        d.injected.map(i=>`「${esc(i.title)}」 <span style="opacity:.75">by ${esc(i.author)}</span>${i.challenged?' ⚠':''}`).join(" · ") +
+        `</div>`
+      : `<div class="refs"><span class="none">참조할 검증된 지식이 아직 없습니다 — 이 답은 AI 혼자 만든 것입니다.</span></div>`;
+    $("thread").innerHTML = `
+      <h2 class="sec">AI 의 답</h2>
+      <div class="answer">${refs}<div class="body">${esc(d.answer)}</div>
+        <div class="acts" style="margin-top:14px">
+          <button onclick="openAgree('${d.node_ids[0]}')">좋은 답이에요</button>
+          <button class="danger" onclick="openRefute('${d.node_ids[0]}')">틀린 데가 있어요</button>
+          <button class="primary" onclick="openAdd('${d.node_ids[0]}')">제가 아는 걸 보탤게요</button>
+        </div>
+      </div>`;
+    toast(d.stubbed ? "AI 미연결(stub) 상태로 답했습니다 — 구조는 그대로 돕니다" : "답변이 저장됐어요. 판단해주시면 다른 사람 검색에 올라갑니다");
+    window.scrollTo({top:document.body.scrollHeight, behavior:"smooth"});
+  }catch(e){ toast(e.message, true); }
+  finally{ if (btn){ btn.disabled=false; btn.textContent="찾는 답이 없어요 — AI 에게 물어보기"; } }
+}
+
+/* ---------- S4 판단 시트 ---------- */
+function openSheet(html){ $("sheetBody").innerHTML = html; $("sheet").showModal(); }
+function closeSheet(){ $("sheet").close(); }
+
+function openAgree(id){
+  sheetTarget = id;
+  openSheet(`<h3>도움됐어요</h3>
+    <div class="sub">확신을 겁니다. 일찍 알아본 만큼 안목이 쌓이고, 나중에 검증되면 배당을 받습니다.</div>
+    <label>얼마나 확신하세요?</label>
+    <input type="range" id="amt" min="1" max="50" value="5" oninput="pt.textContent=this.value">
+    <div class="pts"><span><b id="pt">5</b> pt</span><span id="balNote"></span></div>
+    <label>한 줄 코멘트 (선택)</label>
+    <input type="text" id="cmt" placeholder="왜 도움이 됐나요?">
+    <div class="sheetacts">
+      <button onclick="closeSheet()">취소</button>
+      <button class="primary" onclick="doAgree()">확신 걸기</button>
+    </div>`);
+}
+async function doAgree(){
+  try{
+    const d = await call(`/api/nodes/${sheetTarget}/stake`,
+      {account:me(), amount:parseFloat($("amt").value), comment:$("cmt").value});
+    closeSheet();
+    toast(`확신 ${d.staked}pt · 이 지식의 인정 ${d.recognition} (문턱 ${CFG.threshold}) · 잔액 ${d.balance.toFixed(0)}pt`);
+    refreshBalance(); runSearch();
+  }catch(e){ toast(e.message, true); }
+}
+
+function pickReason(el, v){
+  document.querySelectorAll(".reasons button").forEach(b=>b.classList.remove("on"));
+  el.classList.add("on"); sheetReason = v;
+}
+function openRefute(id){
+  sheetTarget = id; sheetReason = "";
+  openSheet(`<h3>틀렸어요</h3>
+    <div class="sub">기존 답은 <b>지워지지 않습니다.</b> 다른 답이 나란히 올라가고, 검증을 통과하면 그때 기존 답이 밀려납니다.</div>
+    <label>어디가 틀렸나요?</label>
+    <div class="reasons">
+      <button onclick="pickReason(this,'사실 오류')">사실 오류</button>
+      <button onclick="pickReason(this,'조건 누락')">조건 누락</button>
+      <button onclick="pickReason(this,'재현 안 됨')">재현 안 됨</button>
+    </div>
+    <label>근거와 함께 다른 답을 적어주세요</label>
+    <textarea id="claim" placeholder="예: 8000rpm 이상에서는 반대 결과가 나왔습니다. 금형 온도가…"></textarea>
+    <label>확신 (최소 ${CFG.refuteMin}pt)</label>
+    <input type="range" id="amt" min="${CFG.refuteMin}" max="60" value="${CFG.refuteMin}"
+           oninput="pt.textContent=this.value">
+    <div class="pts"><span><b id="pt">${CFG.refuteMin}</b> pt</span></div>
+    <div class="note">입증 책임은 반증하는 쪽에 있습니다.</div>
+    <div class="sheetacts">
+      <button onclick="closeSheet()">취소</button>
+      <button class="danger" onclick="doRefute()">다른 답 올리기</button>
+    </div>`);
+}
+async function doRefute(){
+  const claim = $("claim").value.trim();
+  if (!claim) return toast("다른 답을 적어주세요", true);
+  try{
+    const d = await call(`/api/nodes/${sheetTarget}/refute`,
+      {author:me(), reason:sheetReason, claim, stake:parseFloat($("amt").value)});
+    closeSheet();
+    toast("올라갔습니다. " + d.note);
+    refreshBalance(); runSearch();
+  }catch(e){ toast(e.message, true); }
+}
+
+function openAdd(id){
+  sheetTarget = id;
+  openSheet(`<h3>보탤게요</h3>
+    <div class="sub">조건·예외·직접 겪은 것 — AI 가 모르는 건 이런 것들입니다.</div>
+    <label>보탤 내용</label>
+    <textarea id="inc" placeholder="예: 저희 라인에서는 금형 온도가 낮아 다른 결과가…"></textarea>
+    <div class="note calc">보태면 검토 대상이 되고, 검증되면 다른 사람 답에 쓰입니다.</div>
+    <div class="sheetacts">
+      <button onclick="closeSheet()">취소</button>
+      <button class="primary" onclick="doAdd()">보태기</button>
+    </div>`);
+}
+async function doAdd(){
+  const answer = $("inc").value.trim();
+  if (!answer) return toast("보탤 내용을 적어주세요", true);
+  try{
+    await call(`/api/nodes/${sheetTarget}/fork`, {author:me(), answer, stake:0});
+    closeSheet(); toast("보태주셔서 고맙습니다 — 검토 대상이 되었습니다");
+    runSearch();
+  }catch(e){ toast(e.message, true); }
+}
+
+function openMeasure(id){
+  sheetTarget = id;
+  openSheet(`<h3>실제로 해봤어요</h3>
+    <div class="sub">측정 가능한 결과만 — 수율, 불량률, 시간, 비용. 만족도나 동의는 닻이 아닙니다.</div>
+    <label>무엇을 쟀나요</label>
+    <input type="text" id="metric" placeholder="예: 웰드라인 불량률">
+    <label>해보기 전 → 해본 뒤</label>
+    <div style="display:flex;gap:8px">
+      <input type="text" id="base" placeholder="8.0" inputmode="decimal">
+      <input type="text" id="obs" placeholder="2.0" inputmode="decimal">
+      <input type="text" id="unit" placeholder="%" style="max-width:70px">
+    </div>
+    <label>어느 쪽이 좋은 건가요</label>
+    <div class="reasons">
+      <button onclick="pickReason(this,'lower_better')" class="on">작을수록 좋음</button>
+      <button onclick="pickReason(this,'higher_better')">클수록 좋음</button>
+    </div>
+    <div class="note calc">실제 결과는 동의보다 강한 신호입니다 — 통과하면 바로 검증됩니다.</div>
+    <div class="sheetacts">
+      <button onclick="closeSheet()">취소</button>
+      <button class="primary" onclick="doMeasure()">결과 올리기</button>
+    </div>`);
+  sheetReason = "lower_better";
+}
+async function doMeasure(){
+  const metric = $("metric").value.trim();
+  const baseline = parseFloat($("base").value), observed = parseFloat($("obs").value);
+  if (!metric || isNaN(baseline) || isNaN(observed)) return toast("지표와 두 숫자를 채워주세요", true);
+  try{
+    const d = await call(`/api/nodes/${sheetTarget}/measure`,
+      {metric, baseline, observed, direction:sheetReason, unit:$("unit").value, reporter:me()});
+    closeSheet();
+    toast(d.passes
+      ? `✓ 결과 확인됨 — ${(d.relative_improvement*100).toFixed(1)}% 개선. 이 지식이 검증됩니다.`
+      : `기록됐습니다 — 개선 ${(d.relative_improvement*100).toFixed(1)}%. 아직 검증 기준에 못 미칩니다.`);
+    runSearch();
+  }catch(e){ toast(e.message, true); }
+}
+
+async function askAdvice(id){
+  try{
+    const d = await call(`/api/nodes/${id}/advise`, {requested_by:me()});
+    if (!d.advisories.length) return toast(d.note || "충돌 후보를 찾지 못했습니다");
+    openSheet(`<h3>AI 가 찾은 충돌 후보</h3>
+      <div class="sub">${esc(d.note)}</div>
+      ${d.advisories.map(a=>`<div class="chal">${esc(a.detail)}
+        <span style="opacity:.7">(확신 ${Math.round(a.confidence*100)}%)</span></div>`).join("")}
+      <div class="sheetacts"><button onclick="closeSheet()">닫기</button>
+      <button class="danger" onclick="closeSheet();openRefute('${id}')">동의합니다 — 반증하기</button></div>`);
+  }catch(e){ toast(e.message, true); }
+}
+
+/* ---------- S6 내 활동 ---------- */
+async function refreshBalance(){
+  try{
+    const d = await fetch("/api/me?account=" + encodeURIComponent(me())).then(r=>r.json());
+    $("bal").textContent = `${Math.round(d.balance)}pt`;
+  }catch(e){ $("bal").textContent = "–"; }
+}
+async function showMine(){
+  const d = await fetch("/api/me?account=" + encodeURIComponent(me())).then(r=>r.json());
+  $("results").innerHTML=""; $("askbox").innerHTML=""; $("thread").innerHTML="";
+  $("hint").textContent=""; 
+  $("mine").innerHTML = `<h2 class="sec">내 활동</h2>
+    <div class="mine">
+      <div class="stat"><div class="n">${Math.round(d.balance)}</div><div class="l">쓸 수 있는 포인트</div></div>
+      <div class="stat"><div class="n">${d.staked}</div><div class="l">확신 걸어둔 것</div></div>
+      <div class="stat"><div class="n">${d.insight}</div><div class="l">내 안목</div></div>
+      <div class="stat"><div class="n">${d.reused}</div><div class="l">내 지식이 쓰인 횟수</div></div>
+    </div>
+    <h2 class="sec">내가 올린 것</h2>
+    ${d.contributions.length ? d.contributions.map(c=>`
+      <article class="card ${c.verified?'verified':''}">
+        <div class="badges">
+          ${c.verified?'<span class="b ok">✓ 검증됨</span>':'<span class="b">검토 중</span>'}
+          ${c.challenged?'<span class="b warn">⚠ 반박 있음</span>':''}
+          <span class="b">인정 ${c.recognition} / ${CFG.threshold}</span>
+        </div>
+        <div class="t">${esc(c.title)}</div>
+        ${c.reused ? `<div class="meas">다른 사람 답에 ${c.reused}번 쓰였습니다</div>` : ""}
+      </article>`).join("")
+      : '<div class="empty">아직 올린 것이 없어요. 검색하다 아는 게 나오면 보태주세요.</div>'}`;
+}
+
+refreshBalance();
+$("me").addEventListener("change", ()=>{ refreshBalance(); });
+</script>
+</body>
+</html>

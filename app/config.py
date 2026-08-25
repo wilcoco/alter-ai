@@ -46,8 +46,14 @@ class Settings:
     database_url: str
 
     # -- 석회화(승격) 정책 -------------------------------------------------
-    #: 승격 후보가 되기 위한 최소 누적 스테이크
-    promotion_stake_threshold: float
+    #: 승격에 필요한 최소 **누적 인정 지수** (순서·허브 가중 권위).
+    #:
+    #: 단위 주의: 이것은 포인트가 아니다. 권위는 인정 1건당 약 1.0 씩 쌓이고
+    #: (인정자의 안목만큼 가산), 스테이크 액수는 여기 곱해지지 **않는다** —
+    #: 돈으로 관문 가중치를 살 수 없다는 tree.py 의 규칙("포인트 크기 = 기여
+    #: 크기")을 관문 지표에서도 지키기 위해서다. 스테이크는 진입 비용이자
+    #: 확신의 증거로 병존하되, 관문이 세는 것은 **누가 얼마나 일찍 알아봤는가**다.
+    recognition_threshold: float
     #: 큰 스테이크는 기여를 동반해야 한다 (tree.py 의 "포인트 크기 = 기여 크기")
     large_stake_threshold: float
     #: 잠복기 — 후보가 폴립층에서 관찰당해야 하는 최소 틱 수 (시간이 검증자)
@@ -56,6 +62,12 @@ class Settings:
     ubi_grant: float
     #: 컨텍스트 주입 시 끌어올 정본 노드 최대 개수
     injection_top_k: int
+    #: 검색 결과 개수
+    search_top_k: int
+    #: 검색 결과 중 신규·잠복·저인정 노드에 강제 배정할 비율 (마태 효과 보정)
+    explore_quota: float
+    #: 반증에 요구하는 최소 스테이크 — 입증 책임의 경제적 구현
+    refute_min_stake: float
 
     @property
     def llm_enabled(self) -> bool:
@@ -76,11 +88,14 @@ def load_settings() -> Settings:
         base_model=os.environ.get("CORAL_BASE_MODEL", "claude-opus-5"),
         max_tokens=_i("CORAL_MAX_TOKENS", 8000),
         database_url=db_url,
-        promotion_stake_threshold=_f("CORAL_PROMOTION_STAKE_THRESHOLD", 25.0),
+        recognition_threshold=_f("CORAL_RECOGNITION_THRESHOLD", 3.0),
         large_stake_threshold=_f("CORAL_LARGE_STAKE_THRESHOLD", 25.0),
         quarantine_ticks=_i("CORAL_QUARANTINE_TICKS", 1),
         ubi_grant=_f("CORAL_UBI_GRANT", 100.0),
         injection_top_k=_i("CORAL_INJECTION_TOP_K", 8),
+        search_top_k=_i("CORAL_SEARCH_TOP_K", 12),
+        explore_quota=_f("CORAL_EXPLORE_QUOTA", 0.30),
+        refute_min_stake=_f("CORAL_REFUTE_MIN_STAKE", 10.0),
     )
 
 

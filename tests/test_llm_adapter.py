@@ -11,7 +11,7 @@ import types
 
 import pytest
 
-from app.capture.damage import make_probe
+from app.capture.damage import make_advisor
 from app.capture.llm import AnthropicLLM, StubLLM
 from app.capture.pic import capture
 from app.core.ontology import Node, NodeStatus, NodeType
@@ -101,7 +101,7 @@ def test_pic_capture_falls_back_instead_of_losing_the_answer():
     assert graph.nodes and graph.nodes[0].content.startswith("기저의 답")
 
 
-def test_damage_probe_drops_hallucinated_and_low_confidence_conflicts():
+def test_advisor_drops_hallucinated_and_low_confidence_items():
     payload = json.dumps(
         {
             "conflicts": [
@@ -112,17 +112,21 @@ def test_damage_probe_drops_hallucinated_and_low_confidence_conflicts():
         }
     )
     llm, _fake = _llm(payload)
-    probe = make_probe(llm)
+    advise = make_advisor(llm)
 
     candidate = Node(id="cand", type=NodeType.CLAIM, title="후보")
     canonical = [
         Node(id="real", type=NodeType.CLAIM, title="정본", status=NodeStatus.CANONICAL)
     ]
-    conflicts = probe(candidate, canonical)
+    advisories = advise(candidate, canonical)
 
-    assert len(conflicts) == 1                    # 저확신·환각은 버려진다
-    assert conflicts[0].canonical_id == "real"
-    assert conflicts[0].confidence == 0.9
+    assert len(advisories) == 1                   # 저확신·환각은 버려진다
+    assert advisories[0].canonical_id == "real"
+    assert advisories[0].confidence == 0.9
+    # 제보는 손상 신호 타입이 아니다 — 관문에 넣으려면 새 코드를 써야 한다
+    from app.core.promotion import Advisory, Conflict
+    assert isinstance(advisories[0], Advisory)
+    assert not isinstance(advisories[0], Conflict)
 
 
 def test_stub_llm_declares_itself_instead_of_inventing_an_answer():

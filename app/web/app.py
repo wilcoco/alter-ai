@@ -63,16 +63,31 @@ async def _service_error(_request: Request, exc: ServiceError) -> JSONResponse:
 app.include_router(router)
 
 
+def _ctx() -> dict:
+    return {
+        "version": __version__,
+        "llm": get_llm().name,
+        "llm_enabled": settings.llm_enabled,
+        "recognition_threshold": settings.recognition_threshold,
+        "quarantine_ticks": settings.quarantine_ticks,
+        "refute_min_stake": settings.refute_min_stake,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    """사용자 화면 (S1~S6). 기계 어휘는 여기 나오지 않는다."""
+    return TEMPLATES.TemplateResponse(request, "app.html", _ctx())
+
+
+@app.get("/console", response_class=HTMLResponse)
+def console(request: Request) -> HTMLResponse:
+    """운영자 화면 (S7) — 기존 3-패널. 테스트 중 기계가 도는지 우리가 본다."""
     return TEMPLATES.TemplateResponse(
         request,
         "index.html",
-        {
-            "version": __version__,
-            "llm": get_llm().name,
-            "llm_enabled": settings.llm_enabled,
-            "stake_threshold": settings.promotion_stake_threshold,
-            "quarantine_ticks": settings.quarantine_ticks,
+        _ctx()
+        | {
+            "stake_threshold": settings.recognition_threshold,
         },
     )

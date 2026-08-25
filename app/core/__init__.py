@@ -20,25 +20,26 @@ from app.core.ontology import (
     PIC_TYPES,
 )
 from app.core.promotion import (
+    Advisory,
     Conflict,
-    DamageProbe,
     DamageReport,
+    GateReason,
     PromotionDecision,
     PromotionPolicy,
     Verdict,
     apply,
     damage_test,
     judge,
-    strict_gate,
 )
 from app.core.scoring import ScoreEngine
 from app.core.verification import Direction, Measurement, VerificationRegistry
 
 __all__ = [
+    "Advisory",
     "Conflict",
-    "DamageProbe",
     "DamageReport",
     "Direction",
+    "GateReason",
     "Economy",
     "Edge",
     "EdgeType",
@@ -59,5 +60,4 @@ __all__ = [
     "apply",
     "damage_test",
     "judge",
-    "strict_gate",
 ]
