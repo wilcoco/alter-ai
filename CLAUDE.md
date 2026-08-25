@@ -54,11 +54,22 @@
 손상 판정 함수 · 음성 선택 보수성(쿤 문제) · 관문 적응 재귀 · 자기의
 계산적 정의 · 암묵지 병목 · 승격 (b)경로(가소성 본체). 상세: spec §6.
 
+## 구현 현황 (2026-08-20, 관문 v1.3 + 검색 회로)
+- **관문 판정권은 사람과 현실에만 있다.** `judge()` 인자에 LLM 통로가 없고,
+  기저는 제보자(`make_advisor` → `Advisory` 타입)로 강등됐다. 이 구조를
+  `test_judge_has_no_channel_for_an_llm` / `test_gate_never_calls_the_llm` 이
+  강제한다 — **되돌리지 말 것 (중력 5)**.
+- 사용자 화면 `/` (app.html, 기계 어휘 금지) / 운영자 콘솔 `/console` (3-패널).
+- 관문 지표는 누적 인정(권위)이고 **링크 가중치는 1.0 고정** — 액수로 관문
+  가중치를 사지 못하게. 문턱 단위는 포인트가 아니라 인정 건수(기본 3).
+- 설계 문서: `docs/promotion-gate-spec.md`(v1.3) · `docs/reference-repos.md` ·
+  `docs/palantir-analogy.md`.
+
 ## 구현 현황 (2026-08-19, MVP 한 바퀴 완료)
 - `/app` — 한 바퀴 동작함. 진입점 `app/web/app.py`, 오케스트레이션은
   `app/store/service.py`. 설계 → 코드 대응표는 `docs/mvp-one-wheel.md`.
 - `/lab` — 승격 (b)경로 실험 하네스만 있음 (`promotion_b_sketch.py`). 답 아님.
-- `/tests` — 27개. `test_one_wheel.py::test_the_wheel_closes` 가 바퀴가 닫히는지
+- `/tests` — 50개. `test_one_wheel.py::test_the_wheel_closes` 가 바퀴가 닫히는지
   (승격된 지식이 다음 문답에 주입되는지) 직접 검사한다.
 - 배포: Railway (`railway.json`), 문서는 `docs/deploy-railway.md`.
 - **코드를 고치기 전에 `docs/mvp-one-wheel.md` §3(의도적으로 축소한 것)을 읽을 것.**

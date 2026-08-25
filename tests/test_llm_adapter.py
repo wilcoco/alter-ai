@@ -95,7 +95,7 @@ def test_pic_capture_builds_the_inference_chain():
 
 
 def test_pic_capture_falls_back_instead_of_losing_the_answer():
-    """구조화가 실패해도 문답은 증발하지 않는다."""
+    """구조화가 실패해도 문답은 증발하지 않는다 (실 답변이 있을 때)."""
     graph = capture(StubLLM(), "질문", "기저의 답 본문. 두 번째 문장.")
     assert graph.fallback
     assert graph.nodes and graph.nodes[0].content.startswith("기저의 답")

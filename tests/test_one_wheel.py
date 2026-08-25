@@ -294,3 +294,20 @@ def test_my_activity_shows_reuse_of_my_knowledge(client):
     mine = client.get("/api/me", params={"account": "alice"}).json()
     assert mine["reused"] >= 1
     assert any(c["reused"] >= 1 for c in mine["contributions"])
+
+
+def test_stub_non_answers_do_not_pollute_the_corpus(client):
+    """기저가 "답이 없다"고 말한 것을 지식으로 포획하면 안 된다.
+
+    실사용 화면 캡처에서 발견된 오염 — stub 경고문이 주장 노드가 되어 검색
+    결과를 채웠다. 문답 자체(질문)는 기록되되 주장 노드는 생기지 않아야 한다.
+    """
+    asked = client.post(
+        "/api/ask", json={"question": QUESTION, "author": "alice"}
+    ).json()
+    assert asked["stubbed"], "이 테스트는 stub 기저를 전제한다"
+    assert len(asked["node_ids"]) == 1, "stub 답변에서 주장 노드가 생성됐다"
+
+    found = client.get("/api/search", params={"q": QUESTION}).json()
+    for r in found["results"]:
+        assert "stub" not in r["title"].lower(), f"stub 경고문이 검색에 노출: {r['title']}"

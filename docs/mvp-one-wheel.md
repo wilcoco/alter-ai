@@ -1,5 +1,8 @@
 # MVP "최소 한 바퀴" — 설계 → 코드 대응표
 
+> **갱신 2026-08-20**: 관문 v1.3 교정(판정권 회수) · 검색 선점 회로 · 사용자
+> 화면 분리 반영. 관문 명세는 `docs/promotion-gate-spec.md` 를 볼 것.
+
 > **이 문서는 정본이 아니라 구현 기록이다.** 정본 4문서(spec · full-record ·
 > session-log · protocol)는 이 구현 때문에 바뀌지 않았다. 설계 변경은 채팅
 > 세미나 합의를 거쳐야 하며, 여기서는 **설계의 어느 부분이 코드가 되었고 어느
@@ -15,7 +18,12 @@
 | 사용자 승인/증분 | §C3 "문답의 소유자는 사용자" | `service.respond` | `POST /api/turns/{id}/respond` |
 | 스테이킹 | §B6 지식 시장 · economy.py | `app/core/economy.py` | `POST /api/nodes/{id}/stake` |
 | 외부 현실 닻 | §C1 verification.py | `app/core/verification.py` | `POST /api/nodes/{id}/measure` |
+| 검색 선점 | spec §0 STEP 2 · §3 회로 | `app/injection.py:search` | `GET /api/search` |
+| 반증 (형제 노드) | gate-spec §4 | `service.refute` | `POST /api/nodes/{id}/refute` |
+| 분기 (경쟁 답) | tree.py FORK | `service.fork` | `POST /api/nodes/{id}/fork` |
+| 기저 제보 (무표) | gate-spec §4-5 | `capture/damage.py:make_advisor` | `POST /api/nodes/{id}/advise` |
 | 승격 판정 (손상) | §B4 면역계 · §7 danger model | `app/core/promotion.py` | `POST /api/nodes/{id}/promote` |
+| 내 활동 (환류 측정) | spec §8 정산 역류 | `service.my_activity` | `GET /api/me` |
 | 정본에 굳음 | spec §1 신규 안정층 | `Ontology.promote` | — |
 | 잠복 / 부활 | §C1 tree.py 죽지 않는 가지 | `Ontology.make_dormant/revive` | `POST /api/nodes/{id}/revive` |
 
@@ -39,10 +47,13 @@
 
 정직하게 적는다. 아래는 "구현했다"고 말하면 안 되는 것들이다.
 
-- **손상 판정 함수** — v0. 구조적 신호(정본의 `refutes` 엣지)와 의미적 신호
-  (기저 LLM 모순 시험) 둘뿐이다. 후자는 **관문이 기저의 판단에 의존하는 순환**을
-  품고 있다 (spec §6-3). 외부 현실 닻만이 이 순환 밖에 있고, 그래서 실측이
-  통과하면 스테이크 문턱을 면제하도록 정책이 짜여 있다.
+- **손상 판정 함수** — v1.3. 신호는 ① 검증된 반증(정본이 된 refuter) ②
+  실측 악화 둘뿐이며 **둘 다 기저 LLM 밖에서 온다** (v0 의 LLM 판정자는
+  중력 5 로 기록·제거). 여전히 손상의 *존재*를 "검증된 반증의 존재"로
+  치환한 것이지 손상의 *정도*를 재는 함수가 아니다.
+- **기저 제보의 의제 설정 권력** — 제보자는 표가 없지만, 무엇을 사람 눈앞에
+  올릴지 고르는 것 자체가 조용한 편집권이다. 요청 시에만 제보 + 전체 로그
+  공개로 최소화할 뿐 소멸시키지 못했다.
 - **음성 선택의 보수성(쿤 문제)** — 안 풀었다. 완충으로 `CONFIDENCE_FLOOR`
   (낮은 확신의 충돌은 손상으로 안 셈)를 두었을 뿐이다. 패러다임 전환 지식이
   정의상 정본과 충돌한다는 구조적 문제는 그대로 남아 있다.

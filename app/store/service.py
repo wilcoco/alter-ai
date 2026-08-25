@@ -353,8 +353,14 @@ def ask(session: Session, question: str, author: str) -> AskResult:
     )
     session.flush()
 
-    graph = pic.capture(llm, question, answer.text)
-    node_ids = _persist_graph(session, graph, turn_id=turn_id, author=author)
+    # 기저가 stub 이면 답이 없다고 말한 것이지 지식을 준 게 아니다.
+    # 그것을 주장 노드로 포획하면 폴립층이 비-지식으로 오염된다 (실측으로 확인).
+    if answer.stubbed:
+        graph = pic.PICGraph(summary="기저 LLM 미연결 — 구조화 생략", fallback=True)
+        node_ids: list[str] = []
+    else:
+        graph = pic.capture(llm, question, answer.text)
+        node_ids = _persist_graph(session, graph, turn_id=turn_id, author=author)
 
     # 문답 자체도 노드다 (qa) — 귀속의 뿌리이자 H2A2H2 스키마의 노드 타입.
     qa_id = _add_node(
